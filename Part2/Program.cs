@@ -29,7 +29,8 @@ public class Program
             declare int x;
             declare string y;
             declare string z;
-            f(x, y) -> z;
+            declare int v;
+            f(g(x), y)(v) -> z;
             ";
 
         var parts = input
@@ -59,7 +60,7 @@ public class Program
             {
                 string argsStr = string.Join(", ", Arguments.Select(a => a.ToString()));
                 string returnStr = string.Join(", ", Returns.Select(a => a.ToString()));
-                return $"Function(Name={Callee}, Parameters=[{argsStr}] Returns=[{returnStr}])";
+                return $"Function(Name={Callee}, Parameters=[{argsStr}], Returns=[{returnStr}])";
             }
         }
 

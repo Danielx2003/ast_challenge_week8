@@ -1,28 +1,48 @@
 ﻿using System.Diagnostics.Contracts;
-using static SyntaxTree.Program.Parser;
-using static SyntaxTree.Program.Tokenizer;
+using System.Linq;
+using static Part2.Program.Parser;
+using static Part2.Program.Tokenizer;
 
-namespace SyntaxTree;
+namespace Part2;
 
 public class Program
 {
     static void Main(string[] args)
     {
         /*
-         * grammar:
-         * F -> Call
-         * ArgList -> E(,E)*
-         * E -> Literal
-         * 
-         * new:
          * Expression = Primary, ( Call )*
          * Primary = Identifier | ( "(" Expression ")" )
-         * Call = ("(" ArgsList ")" )?
+         * Call = ("(" ArgsList ")" , Return )?
          * ArgsList = Expression, ( "," Expression )*
-         * 
+         * Return = ReturnType Identifier
          */
+
         var parser = new Parser();
-        parser.Parse("f()(g(), h(), );");
+        //string input = @"
+        //    declare int x;
+        //    declare string y;
+        //    declare bool z;
+        //    f(g(x), y)(z);
+        //    ";
+
+        string input = @"
+            declare int x;
+            declare string y;
+            declare string z;
+            declare int v;
+            f(g(x), y)(v) -> z;
+            ";
+
+        var parts = input
+            .Split('\n')
+            .Select(p => p.Trim())
+            .Where(p => !string.IsNullOrEmpty(p))
+            .ToList();
+
+        foreach (var part in parts)
+        {
+            parser.Parse(part);
+        }
     }
 
 
@@ -34,11 +54,13 @@ public class Program
         {
             public Node Callee { get; set; } // would be the callee
             public List<Node> Arguments { get; set; } // is the argument List
+            public List<Node> Returns { get; set; }
 
             public override string ToString()
             {
                 string argsStr = string.Join(", ", Arguments.Select(a => a.ToString()));
-                return $"Call({Callee}, [{argsStr}])";
+                string returnStr = string.Join(", ", Returns.Select(a => a.ToString()));
+                return $"Function(Name={Callee}, Parameters=[{argsStr}], Returns=[{returnStr}])";
             }
         }
 
@@ -53,7 +75,8 @@ public class Program
 
         private int index = 0;
         public List<Token> tokens;
-        public Token? nextToken => index+1 < tokens.Count ? tokens[index + 1] : null;
+        public Token? nextToken => index + 1 < tokens.Count ? tokens[index + 1] : null;
+        public Dictionary<string, VariableTypes> variableTypeMap = new Dictionary<string, VariableTypes>();
 
         public void Parse(string exp)
         {
@@ -71,27 +94,43 @@ public class Program
                 Console.WriteLine(node.ToString());
             }
 
-            Console.ReadLine();
+            if (tokens[index].Type == TokenType.Declare)
+            {
+                ParseDeclare();
+                return;
+            }
 
+            Console.ReadLine();
+        }
+        public void ParseDeclare()
+        {
+            variableTypeMap[tokens[index + 2].Value] = tokens[index + 1].VariableType;
         }
 
         public Node ParseExpression()
         {
+            if (!variableTypeMap.ContainsKey(tokens[index].Value))
+            {
+                throw new Exception($"Variable {tokens[index].Value} not declared");
+            }
+
             var id = new IdentifierNode
             {
-                Name = tokens[index].Value
+                Name = variableTypeMap[tokens[index].Value].ToString()
             };
+
             CallNode call = null;
 
             if (tokens[index].Type == TokenType.OpenBracket)
             {
                 index++;
-                var args = ParseCall();
+                var (args, returns) = ParseCall();
 
                 call = new CallNode
                 {
                     Callee = id,
-                    Arguments = args
+                    Arguments = args,
+                    Returns = returns,
                 };
             }
 
@@ -106,29 +145,44 @@ public class Program
 
         public Node ParseIdentifier()
         {
-            Node node = new IdentifierNode
+            Node node = null;
+
+            if (!variableTypeMap.ContainsKey(tokens[index].Value))
             {
-                Name = tokens[index].Value
-            };
+                node = new IdentifierNode
+                {
+                    Name = tokens[index].Value
+                };
+            }
+            else
+            {
+                node = new IdentifierNode
+                {
+                    Name = variableTypeMap[tokens[index].Value].ToString()
+                };
+            }
+
             index++;
 
             while (index < tokens.Count && tokens[index].Type == TokenType.OpenBracket)
             {
                 index++;
-                var args = ParseCall();
+                var (args, returns) = ParseCall();
                 node = new CallNode
                 {
                     Callee = node,
-                    Arguments = args
+                    Arguments = args,
+                    Returns = returns,
                 };
             }
 
             return node;
         }
 
-        public List<Node> ParseCall()
+        public (List<Node>, List<Node>) ParseCall()
         {
             var argsList = new List<Node>();
+            var returnList = new List<Node>();
 
             while (tokens[index].Type != TokenType.ClosedBracket)
             {
@@ -140,10 +194,16 @@ public class Program
                 {
                     index++;
                 }
-
             }
             index++;
-            return argsList;
+
+            if (tokens[index].Type == TokenType.ReturnType)
+            {
+                index++;
+                returnList.Add(ParseIdentifier());
+            }
+
+            return (argsList, returnList);
         }
     }
 
@@ -199,12 +259,37 @@ public class Program
                 }
                 else
                 {
-                    if (input[index] == ' ' && id != string.Empty)
+                    if (input[index] == ' ')
                     {
-                        throw new Exception("SYNTAXT ERROR");
+                        if (id == "declare")
+                        {
+                            tokens.Add(new Token { Type = TokenType.Declare, Value = id.Trim() });
+                            id = string.Empty;
+                        }
+
+                        if (id == "int")
+                        {
+                            tokens.Add(new Token { Type = TokenType.VariableType, Value = id.Trim(), VariableType = VariableTypes.Int });
+                            id = string.Empty;
+                        }
+
+                        if (id == "string")
+                        {
+                            tokens.Add(new Token { Type = TokenType.VariableType, Value = id.Trim(), VariableType = VariableTypes.String });
+                            id = string.Empty;
+                        }
+
+                        if (id == "->")
+                        {
+                            tokens.Add(new Token { Type = TokenType.ReturnType, Value = id.Trim() });
+                            id = string.Empty;
+                        }
+                    }
+                    else
+                    {
+                        id += input[index];
                     }
 
-                    id += input[index];
                 }
 
                 index++;
@@ -225,6 +310,7 @@ public class Program
             int brackets = 0; // add 1 for open, minus 1 for closed, should be 0 at the end
             Token prevToken = tokens[0];
             int i = 1;
+
             for (i = 1; i < tokens.Count; i++)
             {
                 if (tokens[i].Type == TokenType.OpenBracket)
@@ -233,7 +319,7 @@ public class Program
                 }
                 else if (tokens[i].Type == TokenType.ClosedBracket)
                 {
-                    if (tokens[i-1].Type == TokenType.Comma)
+                    if (tokens[i - 1].Type == TokenType.Comma)
                     {
                         Console.WriteLine("Syntax Error: Cannot be ,)");
                         return false;
@@ -254,12 +340,12 @@ public class Program
                     {
                         Console.WriteLine("Syntax Error: Identifier it null");
                         return false;
-                    }    
+                    }
 
                 }
             }
 
-            if (tokens[i-1].Type != TokenType.SemiColon)
+            if (tokens[i - 1].Type != TokenType.SemiColon)
             {
                 Console.WriteLine("Syntax error: Must end with semi colon");
                 return false;
@@ -278,6 +364,7 @@ public class Program
         {
             public TokenType Type { get; set; }
             public string Value { get; set; }
+            public VariableTypes VariableType { get; set; }
         }
 
         public enum TokenType
@@ -287,6 +374,15 @@ public class Program
             Comma = 3,
             Identifier = 4,
             SemiColon = 5,
+            Declare = 6,
+            VariableType = 7,
+            ReturnType = 8,
+        }
+
+        public enum VariableTypes
+        {
+            String = 1,
+            Int = 2
         }
     }
 }
