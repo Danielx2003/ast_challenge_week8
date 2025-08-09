@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.Contracts;
+using static SyntaxTree.Program.Parser;
 using static SyntaxTree.Program.Tokenizer;
 
 namespace SyntaxTree;
@@ -21,7 +22,7 @@ public class Program
          * 
          */
         var parser = new Parser();
-        parser.Parse("f(g(x), b, c)(z);");
+        parser.Parse("f()(g(), h(), );");
     }
 
 
@@ -44,10 +45,12 @@ public class Program
         public class IdentifierNode : Node
         {
             public string Name { get; set; }
+            public override string ToString()
+            {
+                return $"'{Name}'";
+            }
         }
 
-
-        private List<Node> tree = new List<Node>();
         private int index = 0;
         public List<Token> tokens;
         public Token? nextToken => index+1 < tokens.Count ? tokens[index + 1] : null;
@@ -56,60 +59,82 @@ public class Program
         {
             tokens = Tokenizer.GetTokens(exp);
 
-            Console.WriteLine("Starting: ");
+            if (!Tokenizer.ValidateTokens(tokens))
+            {
+                Console.WriteLine("Invalid syntax");
+                Console.ReadLine();
+            }
 
             if (tokens[index].Type == TokenType.Identifier)
             {
                 var node = ParseIdentifier();
+                Console.WriteLine(node.ToString());
             }
 
-            Console.WriteLine("DONE");
             Console.ReadLine();
 
         }
 
-        public void ParseExpression()
-        {
-            if (tokens[index].Type == TokenType.OpenBracket)
-            {
-                index++;
-                ParseCall();
-            }
-        }
-
-        public Node ParseIdentifier()
+        public Node ParseExpression()
         {
             var id = new IdentifierNode
             {
                 Name = tokens[index].Value
             };
+            CallNode call = null;
 
-            while (nextToken != null && nextToken.Type == TokenType.OpenBracket)
+            if (tokens[index].Type == TokenType.OpenBracket)
             {
                 index++;
-                ParseCall();
+                var args = ParseCall();
 
+                call = new CallNode
+                {
+                    Callee = id,
+                    Arguments = args
+                };
             }
 
-            ParseExpression();
-
-            if (tokens[index].Type == TokenType.Identifier)
+            if (call != null)
             {
-                Console.WriteLine(tokens[index].Value);
+                return call;
             }
-
-            index++;
 
             return id;
+
         }
 
-        public void ParseCall()
+        public Node ParseIdentifier()
         {
+            Node node = new IdentifierNode
+            {
+                Name = tokens[index].Value
+            };
+            index++;
+
+            while (index < tokens.Count && tokens[index].Type == TokenType.OpenBracket)
+            {
+                index++;
+                var args = ParseCall();
+                node = new CallNode
+                {
+                    Callee = node,
+                    Arguments = args
+                };
+            }
+
+            return node;
+        }
+
+        public List<Node> ParseCall()
+        {
+            var argsList = new List<Node>();
+
             while (tokens[index].Type != TokenType.ClosedBracket)
             {
                 if (tokens[index].Type == TokenType.Identifier)
                 {
-                    ParseIdentifier();
+                    argsList.Add(ParseIdentifier());
                 }
                 else
                 {
@@ -117,9 +142,8 @@ public class Program
                 }
 
             }
-            Console.WriteLine("Close Function Call");
-
             index++;
+            return argsList;
         }
     }
 
@@ -137,7 +161,7 @@ public class Program
                 {
                     if (id != string.Empty)
                     {
-                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id });
+                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id.Trim() });
                         id = string.Empty;
                     }
 
@@ -147,7 +171,7 @@ public class Program
                 {
                     if (id != string.Empty)
                     {
-                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id });
+                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id.Trim() });
                         id = string.Empty;
                     }
 
@@ -157,7 +181,7 @@ public class Program
                 {
                     if (id != string.Empty)
                     {
-                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id });
+                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id.Trim() });
                         id = string.Empty;
                     }
 
@@ -167,7 +191,7 @@ public class Program
                 {
                     if (id != string.Empty)
                     {
-                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id });
+                        tokens.Add(new Token { Type = TokenType.Identifier, Value = id.Trim() });
                         id = string.Empty;
                     }
 
@@ -175,6 +199,11 @@ public class Program
                 }
                 else
                 {
+                    if (input[index] == ' ' && id != string.Empty)
+                    {
+                        throw new Exception("SYNTAXT ERROR");
+                    }
+
                     id += input[index];
                 }
 
@@ -184,6 +213,67 @@ public class Program
             return tokens;
         }
 
+        public static bool ValidateTokens(List<Token> tokens)
+        {
+            /*
+             * validate tokens:
+             * - if there is a comma then closed bracket, throw
+             * - if there are not the same amount of open and closed brackets
+             * - if it does not end with a semi colon
+             */
+
+            int brackets = 0; // add 1 for open, minus 1 for closed, should be 0 at the end
+            Token prevToken = tokens[0];
+            int i = 1;
+            for (i = 1; i < tokens.Count; i++)
+            {
+                if (tokens[i].Type == TokenType.OpenBracket)
+                {
+                    brackets++;
+                }
+                else if (tokens[i].Type == TokenType.ClosedBracket)
+                {
+                    if (tokens[i-1].Type == TokenType.Comma)
+                    {
+                        Console.WriteLine("Syntax Error: Cannot be ,)");
+                        return false;
+                    }
+
+                    brackets--;
+                }
+
+                if (tokens[i].Type == TokenType.Identifier)
+                {
+                    if (tokens[i].Value.Any(x => Char.IsWhiteSpace(x)))
+                    {
+                        Console.WriteLine("Syntax Error: Whitespace in identifier");
+                        return false;
+                    }
+
+                    if (string.IsNullOrEmpty(tokens[i].Value))
+                    {
+                        Console.WriteLine("Syntax Error: Identifier it null");
+                        return false;
+                    }    
+
+                }
+            }
+
+            if (tokens[i-1].Type != TokenType.SemiColon)
+            {
+                Console.WriteLine("Syntax error: Must end with semi colon");
+                return false;
+            }
+
+            if (brackets != 0)
+            {
+                Console.WriteLine("Syntax error: open and closing brackets dont match");
+                return false;
+            }
+
+
+            return true;
+        }
         public class Token
         {
             public TokenType Type { get; set; }
