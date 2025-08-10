@@ -1,5 +1,7 @@
-﻿using System.Diagnostics.Contracts;
+﻿using System;
+using System.Diagnostics.Contracts;
 using System.Linq;
+using System.Text;
 using static Part2.Program.Parser;
 using static Part2.Program.Tokenizer;
 
@@ -26,11 +28,10 @@ public class Program
         //    ";
 
         string input = @"
-            declare int x;
-            declare string y;
-            declare string z;
-            declare int v;
-            f(g(x), y)(v) -> z;
+            f(string) -> A;
+            g(B) -> string;
+            U(T, T) -> T;
+            U(f, g) -> T;
             ";
 
         var parts = input
@@ -39,10 +40,15 @@ public class Program
             .Where(p => !string.IsNullOrEmpty(p))
             .ToList();
 
+        string res = null;
+
         foreach (var part in parts)
         {
-            parser.Parse(part);
+            res = parser.Parse(part);
         }
+        Console.WriteLine(res);
+
+        Console.ReadLine();
     }
 
 
@@ -58,9 +64,9 @@ public class Program
 
             public override string ToString()
             {
-                string argsStr = string.Join(", ", Arguments.Select(a => a.ToString()));
-                string returnStr = string.Join(", ", Returns.Select(a => a.ToString()));
-                return $"Function(Name={Callee}, Parameters=[{argsStr}], Returns=[{returnStr}])";
+                var allTypes = Arguments.Concat(Returns).Select(a => a.ToString());
+                string result = string.Join(" -> ", allTypes);
+                return result;
             }
         }
 
@@ -69,18 +75,19 @@ public class Program
             public string Name { get; set; }
             public override string ToString()
             {
-                return $"'{Name}'";
+                return $"{Name}";
             }
         }
 
         private int index = 0;
         public List<Token> tokens;
         public Token? nextToken => index + 1 < tokens.Count ? tokens[index + 1] : null;
-        public Dictionary<string, VariableTypes> variableTypeMap = new Dictionary<string, VariableTypes>();
+        public Dictionary<string, string> variableTypeMap = new Dictionary<string, string>();
 
-        public void Parse(string exp)
+        public string Parse(string exp)
         {
             tokens = Tokenizer.GetTokens(exp);
+            index = 0;
 
             if (!Tokenizer.ValidateTokens(tokens))
             {
@@ -90,21 +97,110 @@ public class Program
 
             if (tokens[index].Type == TokenType.Identifier)
             {
+                var id = tokens[index].Value;
                 var node = ParseIdentifier();
-                Console.WriteLine(node.ToString());
+                UpdateTypes(id, node);
+                return variableTypeMap[id];
             }
 
-            if (tokens[index].Type == TokenType.Declare)
+            return null;
+        }
+
+        class ExpressionType 
+        {
+
+        }
+
+        class FunctionType : ExpressionType
+        {
+            public List<string> Parameters { get; set; }
+            public string ReturnType { get; set; }
+        }
+
+        class VariableType : ExpressionType
+        {
+            public string Name { get; set; }
+        }
+
+        FunctionType ParseFunctionType(string typeStr)
+        {
+            var parts = new List<string>();
+            var current = new StringBuilder();
+            int depth = 0;
+
+            for (int i = 0; i < typeStr.Length; i++)
             {
-                ParseDeclare();
+                char c = typeStr[i];
+
+                if (c == '(')
+                {
+                    depth++;
+                    current.Append(c);
+                }
+                else if (c == ')')
+                {
+                    depth--;
+                    current.Append(c);
+                }
+                else if (c == '-' && i + 1 < typeStr.Length && typeStr[i + 1] == '>' && depth == 0)
+                {
+                    parts.Add(current.ToString().Trim());
+                    current.Clear();
+                    i++;
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+
+            if (current.Length > 0)
+                parts.Add(current.ToString().Trim());
+
+            if (parts.Count < 2)
+                throw new Exception("Invalid function type");
+
+            var parameters = parts.Take(parts.Count - 1).ToList();
+            var returnType = parts.Last();
+
+            return new FunctionType { Parameters = parameters, ReturnType = returnType };
+        }
+
+        public void UpdateTypes(string id, Node node)
+        {
+            if (!variableTypeMap.ContainsKey(id))
+            {
+                variableTypeMap[id] = node.ToString();
                 return;
             }
 
-            Console.ReadLine();
+            var existingFunc = ParseFunctionType(variableTypeMap[id]);
+            var newFunc = ParseFunctionType(node.ToString());
+
+            if (existingFunc.Parameters.Count != newFunc.Parameters.Count)
+                throw new Exception($"Type mismatch: different number of parameters");
+
+            for (int i = 0; i < existingFunc.Parameters.Count; i++)
+            {
+                UnifyTypes(existingFunc.Parameters[i], newFunc.Parameters[i]);
+            }
+
+            UnifyTypes(existingFunc.ReturnType, newFunc.ReturnType);
         }
-        public void ParseDeclare()
+
+        public string SubstituteGenerics(string signature)
         {
-            variableTypeMap[tokens[index + 2].Value] = tokens[index + 1].VariableType;
+            var parts = signature.Split("->").Select(p => p.Trim()).ToArray();
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (variableTypeMap.ContainsKey(parts[i]))
+                {
+                    parts[i] = variableTypeMap[parts[i]];
+                }
+            }
+
+            return string.Join(" -> ", parts);
         }
 
         public Node ParseExpression()
@@ -116,7 +212,7 @@ public class Program
 
             var id = new IdentifierNode
             {
-                Name = variableTypeMap[tokens[index].Value].ToString()
+                Name = "(" + variableTypeMap[tokens[index].Value].ToString() + ")"
             };
 
             CallNode call = null;
@@ -158,7 +254,7 @@ public class Program
             {
                 node = new IdentifierNode
                 {
-                    Name = variableTypeMap[tokens[index].Value].ToString()
+                    Name = "(" + variableTypeMap[tokens[index].Value].ToString() + ")"
                 };
             }
 
@@ -269,7 +365,7 @@ public class Program
 
                         if (id == "int")
                         {
-                            tokens.Add(new Token { Type = TokenType.VariableType, Value = id.Trim(), VariableType = VariableTypes.Int });
+                            tokens.Add(new Token { Type = TokenType.VariableType, Value = id.Trim(), VariableType = VariableTypes.String });
                             id = string.Empty;
                         }
 
